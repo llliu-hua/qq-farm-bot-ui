@@ -95,25 +95,8 @@ function toLogTs(entry) {
 }
 
 function pushLocalUiLog(message, options = {}) {
-    const msg = String(message || '').trim();
-    if (!msg) return;
-    const acc = accounts.find(a => String(a.id) === String(currentAccountId || '')) || null;
-    localUiLogs.push({
-        time: new Date().toLocaleString(),
-        ts: Date.now(),
-        tag: options.tag || '前端',
-        msg,
-        isWarn: options.isWarn !== false,
-        accountId: currentAccountId || '',
-        accountName: acc ? (acc.name || '') : '',
-        meta: {
-            module: options.module || 'frontend',
-            event: options.event || 'api_error',
-        },
-    });
-    if (localUiLogs.length > LOCAL_UI_LOG_LIMIT) {
-        localUiLogs.splice(0, localUiLogs.length - LOCAL_UI_LOG_LIMIT);
-    }
+    // 前端调试日志已关闭：不再向日志流写入 frontend/api_error 本地日志
+    return;
 }
 
 function matchLogFilters(entry) {
@@ -288,9 +271,21 @@ function renderOpsList(opsRaw) {
     const ops = (opsRaw && typeof opsRaw === 'object') ? { ...opsRaw } : {};
     lastOperationsData = { ...ops };
     const labels = { harvest:'收获', water:'浇水', weed:'除草', bug:'除虫', fertilize:'施肥', plant:'种植', upgrade:'升级', steal:'偷菜', helpWater:'帮浇水', helpWeed:'帮除草', helpBug:'帮除虫', taskClaim:'任务', sell:'出售' };
+    const icons = {
+        harvest: 'fa-hand-holding-droplet',
+        steal: 'fa-hand-sparkles',
+        water: 'fa-tint',
+        weed: 'fa-leaf',
+        bug: 'fa-bug',
+        plant: 'fa-seedling',
+        sell: 'fa-coins',
+    };
     const fixedShow = ['harvest', 'steal', 'water', 'weed', 'bug', 'plant', 'sell'];
     const list = fixedShow.map((k) => [k, Number(ops[k] || 0)]);
-    wrap.innerHTML = list.map(([k,v]) => `<div class="op-stat"><span class="label">${labels[k]||k}</span><span class="count">${v}</span></div>`).join('');
+    wrap.innerHTML = list.map(([k, v]) => {
+        const icon = icons[k] || 'fa-chart-column';
+        return `<div class="op-stat"><span class="label"><i class="fas ${icon}" aria-hidden="true"></i>${labels[k] || k}</span><span class="count">${v}</span></div>`;
+    }).join('');
     syncOpsRowsMode();
 }
 
@@ -310,6 +305,7 @@ function resetDashboardStats() {
     setText('gold', '0');
     setText('coupon', '0');
     setText('stat-gold', '+0');
+    setText('stat-coupon', '+0');
     setText('level', 'Lv0');
     setText('exp-rate', '0/时');
     setText('stat-exp', '+0');
@@ -320,6 +316,8 @@ function resetDashboardStats() {
     setText('fert-organic-hours', '0.0h');
     setText('collect-normal', '0');
     setText('collect-rare', '0');
+    setText('next-farm-check', '--');
+    setText('next-friend-check', '--');
     const fill = $('exp-fill');
     if (fill) fill.style.width = '0%';
     expHistory = [];

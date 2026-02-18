@@ -253,10 +253,7 @@ async function startBot(config) {
 
     const onLoginSuccess = async () => {
         loginReady = true;
-        // 登录成功后，以当前金币/经验作为统计基线，并清空会话增量
         const state = getUserState();
-        setInitialValues(Number(state.gold || 0), Number(state.exp || 0));
-        resetSessionGains();
 
         if (onSellGain) {
             networkEvents.off('sell', onSellGain);
@@ -301,6 +298,10 @@ async function startBot(config) {
         } catch (e) {
             // ignore
         }
+        // 登录成功后，以当前金币/经验/点券作为统计基线，并清空会话增量
+        const latest = getUserState();
+        setInitialValues(Number(latest.gold || 0), Number(latest.exp || 0), Number(latest.coupon || 0));
+        resetSessionGains();
 
         // 登录成功后启动各模块
         await processInviteCodes();
@@ -435,6 +436,11 @@ function syncStatus() {
 
     const limits = require('./friend').getOperationLimits();
     const fullStats = require('./stats').getStats(statusData, userState, connected, limits);
+    const nowMs = Date.now();
+    fullStats.nextChecks = {
+        farmRemainSec: Math.max(0, Math.ceil((Number(nextFarmRunAt || 0) - nowMs) / 1000)),
+        friendRemainSec: Math.max(0, Math.ceil((Number(nextFriendRunAt || 0) - nowMs) / 1000)),
+    };
     
     fullStats.automation = getAutomation();
     fullStats.preferredSeed = getPreferredSeed();

@@ -2,7 +2,19 @@ let editingAccountId = null;
 
 // QR 登录相关变量
 let currentQRCode = '';
+let currentLoginUrl = '';
 let qrCheckInterval = null;
+
+function isMobileByUA() {
+    const ua = navigator.userAgent || '';
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+}
+
+function syncQrOpenButtonVisibility() {
+    const btn = $('btn-qr-open-url');
+    if (!btn) return;
+    btn.style.display = isMobileByUA() ? 'inline-flex' : 'none';
+}
 
 // ============ 扫码登录相关函数 ============
 function switchTab(tabName) {
@@ -62,6 +74,7 @@ async function generateQRCode() {
 
         if (result.ok && result.data) {
             currentQRCode = result.data.code;
+            currentLoginUrl = result.data.url || result.data.loginUrl || '';
             const img = $('qr-code-img');
             const display = $('qr-code-display');
             
@@ -80,6 +93,55 @@ async function generateQRCode() {
     } finally {
         if (btn) btn.disabled = false;
     }
+}
+
+async function openQRCodeLoginUrl() {
+    let targetUrl = currentLoginUrl;
+    if (!targetUrl) {
+        const status = $('qr-status');
+        if (status) {
+            status.textContent = '正在获取扫码链接...';
+            status.style.color = 'var(--sub)';
+        }
+        await generateQRCode();
+        targetUrl = currentLoginUrl;
+    }
+    if (!targetUrl) {
+        alert('未获取到扫码链接，请稍后重试');
+        return;
+    }
+
+    const isMobile = isMobileByUA();
+    if (!isMobile) {
+        window.location.href = targetUrl;
+        return;
+    }
+
+    // 手机端优先尝试通过 QQ deep link 唤起 QQ 打开目标链接
+    const b64 = (typeof btoa === 'function')
+        ? btoa(unescape(encodeURIComponent(targetUrl)))
+        : '';
+    const qqDeepLink = b64
+        ? `mqqapi://forward/url?url_prefix=${encodeURIComponent(b64)}&version=1&src_type=web`
+        : '';
+
+    if (!qqDeepLink) {
+        window.location.href = targetUrl;
+        return;
+    }
+
+    let appSwitched = false;
+    const onVisibility = () => {
+        if (document.hidden) appSwitched = true;
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    setTimeout(() => {
+        document.removeEventListener('visibilitychange', onVisibility);
+        if (!appSwitched) return;
+    }, 1200);
+
+    window.location.href = qqDeepLink;
 }
 
 function startQRCheck() {
@@ -182,6 +244,8 @@ $('btn-add-acc-modal').addEventListener('click', () => {
     $('acc-name-qr').value = '';
     $('acc-platform').value = 'qq';
     currentQRCode = '';
+    currentLoginUrl = '';
+    syncQrOpenButtonVisibility();
     switchTab('qrcode');
     stopQRCheck();
     generateQRCode();
@@ -203,6 +267,15 @@ if (btnQrGenerate) {
     });
 }
 
+const btnQrOpenUrl = $('btn-qr-open-url');
+if (btnQrOpenUrl) {
+    btnQrOpenUrl.addEventListener('click', () => {
+        openQRCodeLoginUrl();
+    });
+}
+
+syncQrOpenButtonVisibility();
+
 window.editAccount = (id) => {
     const acc = accounts.find(a => a.id === id);
     if (!acc) return;
@@ -211,6 +284,7 @@ window.editAccount = (id) => {
     $('acc-code').value = acc.code;
     $('acc-platform').value = acc.platform;
     currentQRCode = '';
+    currentLoginUrl = '';
     switchTab('manual');
     stopQRCheck();
     modal.querySelector('h3').textContent = '编辑账号';

@@ -7,9 +7,10 @@ const { getDataFile, ensureDataDir } = require('./runtime-paths');
 
 const STORE_FILE = getDataFile('store.json');
 const ACCOUNTS_FILE = getDataFile('accounts.json');
+const ALLOWED_PLANTING_STRATEGIES = ['preferred', 'level', 'max_exp', 'max_fert_exp', 'max_profit', 'max_fert_profit'];
 
 // ============ 全局配置 ============
-let globalConfig = {
+const DEFAULT_ACCOUNT_CONFIG = {
     automation: {
         farm: true,
         farm_push: true,   // 收到 LandsNotify 推送时是否立即触发巡田
@@ -22,28 +23,131 @@ let globalConfig = {
         sell: true,
         fertilizer: 'both',
     },
-    // 种植策略: 'preferred'(偏好), 'level'(最高等级)
     plantingStrategy: 'preferred',
     preferredSeedId: 0,
-    // 运行参数
     intervals: {
-        farm: 2,   // 秒
-        friend: 10, // 秒
-        farmMin: 2,   // 秒
-        farmMax: 2,   // 秒
-        friendMin: 10, // 秒
-        friendMax: 10, // 秒
+        farm: 2,
+        friend: 10,
+        farmMin: 2,
+        farmMax: 2,
+        friendMin: 10,
+        friendMax: 10,
     },
-    // 好友互动静默时段（在该时间段内不执行好友互动）
     friendQuietHours: {
         enabled: false,
         start: '23:00',
         end: '07:00',
     },
+};
+
+let accountFallbackConfig = {
+    ...DEFAULT_ACCOUNT_CONFIG,
+    automation: { ...DEFAULT_ACCOUNT_CONFIG.automation },
+    intervals: { ...DEFAULT_ACCOUNT_CONFIG.intervals },
+    friendQuietHours: { ...DEFAULT_ACCOUNT_CONFIG.friendQuietHours },
+};
+
+let globalConfig = {
+    accountConfigs: {},
+    defaultAccountConfig: cloneAccountConfig(DEFAULT_ACCOUNT_CONFIG),
     ui: {
         theme: 'dark', // dark | light
     },
 };
+
+function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
+    return {
+        ...base,
+        automation: { ...(base.automation || DEFAULT_ACCOUNT_CONFIG.automation) },
+        intervals: { ...(base.intervals || DEFAULT_ACCOUNT_CONFIG.intervals) },
+        friendQuietHours: { ...(base.friendQuietHours || DEFAULT_ACCOUNT_CONFIG.friendQuietHours) },
+        plantingStrategy: ALLOWED_PLANTING_STRATEGIES.includes(String(base.plantingStrategy || ''))
+            ? String(base.plantingStrategy)
+            : DEFAULT_ACCOUNT_CONFIG.plantingStrategy,
+        preferredSeedId: Math.max(0, parseInt(base.preferredSeedId, 10) || 0),
+    };
+}
+
+function resolveAccountId(accountId) {
+    const direct = (accountId !== undefined && accountId !== null) ? String(accountId).trim() : '';
+    if (direct) return direct;
+    const envId = String(process.env.FARM_ACCOUNT_ID || '').trim();
+    return envId;
+}
+
+function normalizeAccountConfig(input, fallback = accountFallbackConfig) {
+    const src = (input && typeof input === 'object') ? input : {};
+    const cfg = cloneAccountConfig(fallback || DEFAULT_ACCOUNT_CONFIG);
+
+    if (src.automation && typeof src.automation === 'object') {
+        for (const [k, v] of Object.entries(src.automation)) {
+            if (cfg.automation[k] === undefined) continue;
+            if (k === 'fertilizer') {
+                const allowed = ['both', 'normal', 'organic', 'none'];
+                cfg.automation[k] = allowed.includes(v) ? v : cfg.automation[k];
+            } else {
+                cfg.automation[k] = !!v;
+            }
+        }
+    }
+
+    if (src.plantingStrategy && ALLOWED_PLANTING_STRATEGIES.includes(src.plantingStrategy)) {
+        cfg.plantingStrategy = src.plantingStrategy;
+    }
+
+    if (src.preferredSeedId !== undefined && src.preferredSeedId !== null) {
+        cfg.preferredSeedId = Math.max(0, parseInt(src.preferredSeedId, 10) || 0);
+    }
+
+    if (src.intervals && typeof src.intervals === 'object') {
+        for (const [type, sec] of Object.entries(src.intervals)) {
+            if (cfg.intervals[type] === undefined) continue;
+            cfg.intervals[type] = Math.max(1, parseInt(sec, 10) || cfg.intervals[type] || 1);
+        }
+        cfg.intervals = normalizeIntervals(cfg.intervals);
+    } else {
+        cfg.intervals = normalizeIntervals(cfg.intervals);
+    }
+
+    if (src.friendQuietHours && typeof src.friendQuietHours === 'object') {
+        const old = cfg.friendQuietHours || {};
+        cfg.friendQuietHours = {
+            enabled: src.friendQuietHours.enabled !== undefined ? !!src.friendQuietHours.enabled : !!old.enabled,
+            start: normalizeTimeString(src.friendQuietHours.start, old.start || '23:00'),
+            end: normalizeTimeString(src.friendQuietHours.end, old.end || '07:00'),
+        };
+    }
+
+    return cfg;
+}
+
+function getAccountConfigSnapshot(accountId) {
+    const id = resolveAccountId(accountId);
+    if (!id) return cloneAccountConfig(accountFallbackConfig);
+    return normalizeAccountConfig(globalConfig.accountConfigs[id], accountFallbackConfig);
+}
+
+function setAccountConfigSnapshot(accountId, nextConfig, persist = true) {
+    const id = resolveAccountId(accountId);
+    if (!id) {
+        accountFallbackConfig = normalizeAccountConfig(nextConfig, accountFallbackConfig);
+        globalConfig.defaultAccountConfig = cloneAccountConfig(accountFallbackConfig);
+        if (persist) saveGlobalConfig();
+        return cloneAccountConfig(accountFallbackConfig);
+    }
+    globalConfig.accountConfigs[id] = normalizeAccountConfig(nextConfig, accountFallbackConfig);
+    if (persist) saveGlobalConfig();
+    return cloneAccountConfig(globalConfig.accountConfigs[id]);
+}
+
+function removeAccountConfig(accountId) {
+    const id = resolveAccountId(accountId);
+    if (!id) return;
+    if (globalConfig.accountConfigs[id]) {
+        delete globalConfig.accountConfigs[id];
+        saveGlobalConfig();
+    }
+}
 
 // 加载全局配置
 function loadGlobalConfig() {
@@ -51,20 +155,27 @@ function loadGlobalConfig() {
     try {
         if (fs.existsSync(STORE_FILE)) {
             const data = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
-            // 深度合并
-            globalConfig.automation = { ...globalConfig.automation, ...data.automation };
-            globalConfig.intervals = { ...globalConfig.intervals, ...data.intervals };
-            globalConfig.intervals = normalizeIntervals(globalConfig.intervals);
-            globalConfig.friendQuietHours = { ...globalConfig.friendQuietHours, ...data.friendQuietHours };
-            globalConfig.ui = { ...globalConfig.ui, ...data.ui };
-            if (data.plantingStrategy && ['preferred', 'level'].includes(String(data.plantingStrategy))) {
-                globalConfig.plantingStrategy = String(data.plantingStrategy);
-            } else {
-                globalConfig.plantingStrategy = 'preferred';
+            if (data && typeof data === 'object') {
+                if (data.defaultAccountConfig && typeof data.defaultAccountConfig === 'object') {
+                    accountFallbackConfig = normalizeAccountConfig(data.defaultAccountConfig, DEFAULT_ACCOUNT_CONFIG);
+                } else {
+                    accountFallbackConfig = cloneAccountConfig(DEFAULT_ACCOUNT_CONFIG);
+                }
+                globalConfig.defaultAccountConfig = cloneAccountConfig(accountFallbackConfig);
+
+                const cfgMap = (data.accountConfigs && typeof data.accountConfigs === 'object')
+                    ? data.accountConfigs
+                    : {};
+                globalConfig.accountConfigs = {};
+                for (const [id, cfg] of Object.entries(cfgMap)) {
+                    const sid = String(id || '').trim();
+                    if (!sid) continue;
+                    globalConfig.accountConfigs[sid] = normalizeAccountConfig(cfg, accountFallbackConfig);
+                }
             }
-            if (data.preferredSeedId !== undefined && data.preferredSeedId !== null) {
-                globalConfig.preferredSeedId = data.preferredSeedId;
-            }
+            globalConfig.ui = { ...globalConfig.ui, ...(data.ui || {}) };
+            const theme = String(globalConfig.ui.theme || '').toLowerCase();
+            globalConfig.ui.theme = theme === 'light' ? 'light' : 'dark';
         }
     } catch (e) {
         console.error('加载配置失败:', e.message);
@@ -85,15 +196,18 @@ function saveGlobalConfig() {
 // 初始化加载
 loadGlobalConfig();
 
-function getAutomation() { return { ...globalConfig.automation }; }
+function getAutomation(accountId) {
+    return { ...getAccountConfigSnapshot(accountId).automation };
+}
 
-function getConfigSnapshot() {
+function getConfigSnapshot(accountId) {
+    const cfg = getAccountConfigSnapshot(accountId);
     return {
-        automation: { ...globalConfig.automation },
-        plantingStrategy: globalConfig.plantingStrategy,
-        preferredSeedId: globalConfig.preferredSeedId,
-        intervals: { ...globalConfig.intervals },
-        friendQuietHours: { ...globalConfig.friendQuietHours },
+        automation: { ...cfg.automation },
+        plantingStrategy: cfg.plantingStrategy,
+        preferredSeedId: cfg.preferredSeedId,
+        intervals: { ...cfg.intervals },
+        friendQuietHours: { ...cfg.friendQuietHours },
         ui: { ...globalConfig.ui },
     };
 }
@@ -101,38 +215,42 @@ function getConfigSnapshot() {
 function applyConfigSnapshot(snapshot, options = {}) {
     const cfg = snapshot || {};
     const persist = options.persist !== false;
+    const accountId = options.accountId;
+
+    const current = getAccountConfigSnapshot(accountId);
+    const next = normalizeAccountConfig(current, accountFallbackConfig);
 
     if (cfg.automation && typeof cfg.automation === 'object') {
         for (const [k, v] of Object.entries(cfg.automation)) {
-            if (globalConfig.automation[k] === undefined) continue;
+            if (next.automation[k] === undefined) continue;
             if (k === 'fertilizer') {
                 const allowed = ['both', 'normal', 'organic', 'none'];
-                globalConfig.automation[k] = allowed.includes(v) ? v : globalConfig.automation[k];
+                next.automation[k] = allowed.includes(v) ? v : next.automation[k];
             } else {
-                globalConfig.automation[k] = !!v;
+                next.automation[k] = !!v;
             }
         }
     }
 
-    if (cfg.plantingStrategy && ['preferred', 'level'].includes(cfg.plantingStrategy)) {
-        globalConfig.plantingStrategy = cfg.plantingStrategy;
+    if (cfg.plantingStrategy && ALLOWED_PLANTING_STRATEGIES.includes(cfg.plantingStrategy)) {
+        next.plantingStrategy = cfg.plantingStrategy;
     }
 
     if (cfg.preferredSeedId !== undefined && cfg.preferredSeedId !== null) {
-        globalConfig.preferredSeedId = Math.max(0, parseInt(cfg.preferredSeedId) || 0);
+        next.preferredSeedId = Math.max(0, parseInt(cfg.preferredSeedId, 10) || 0);
     }
 
     if (cfg.intervals && typeof cfg.intervals === 'object') {
         for (const [type, sec] of Object.entries(cfg.intervals)) {
-            if (globalConfig.intervals[type] === undefined) continue;
-            globalConfig.intervals[type] = Math.max(1, parseInt(sec) || 60);
+            if (next.intervals[type] === undefined) continue;
+            next.intervals[type] = Math.max(1, parseInt(sec, 10) || next.intervals[type] || 1);
         }
-        globalConfig.intervals = normalizeIntervals(globalConfig.intervals);
+        next.intervals = normalizeIntervals(next.intervals);
     }
 
     if (cfg.friendQuietHours && typeof cfg.friendQuietHours === 'object') {
-        const old = globalConfig.friendQuietHours || {};
-        globalConfig.friendQuietHours = {
+        const old = next.friendQuietHours || {};
+        next.friendQuietHours = {
             enabled: cfg.friendQuietHours.enabled !== undefined ? !!cfg.friendQuietHours.enabled : !!old.enabled,
             start: normalizeTimeString(cfg.friendQuietHours.start, old.start || '23:00'),
             end: normalizeTimeString(cfg.friendQuietHours.end, old.end || '07:00'),
@@ -146,29 +264,38 @@ function applyConfigSnapshot(snapshot, options = {}) {
         }
     }
 
+    setAccountConfigSnapshot(accountId, next, false);
     if (persist) saveGlobalConfig();
-    return getConfigSnapshot();
+    return getConfigSnapshot(accountId);
 }
 
-function setAutomation(key, value) {
-    return applyConfigSnapshot({ automation: { [key]: value } });
+function setAutomation(key, value, accountId) {
+    return applyConfigSnapshot({ automation: { [key]: value } }, { accountId });
 }
 
-function isAutomationOn(key) { return !!globalConfig.automation[key]; }
-
-function getPreferredSeed() { return globalConfig.preferredSeedId; }
-
-function setPreferredSeed(seedId) {
-    return applyConfigSnapshot({ preferredSeedId: seedId });
+function isAutomationOn(key, accountId) {
+    return !!getAccountConfigSnapshot(accountId).automation[key];
 }
 
-function getPlantingStrategy() { return globalConfig.plantingStrategy; }
-
-function setPlantingStrategy(strategy) {
-    return applyConfigSnapshot({ plantingStrategy: strategy });
+function getPreferredSeed(accountId) {
+    return getAccountConfigSnapshot(accountId).preferredSeedId;
 }
 
-function getIntervals() { return { ...globalConfig.intervals }; }
+function setPreferredSeed(seedId, accountId) {
+    return applyConfigSnapshot({ preferredSeedId: seedId }, { accountId });
+}
+
+function getPlantingStrategy(accountId) {
+    return getAccountConfigSnapshot(accountId).plantingStrategy;
+}
+
+function setPlantingStrategy(strategy, accountId) {
+    return applyConfigSnapshot({ plantingStrategy: strategy }, { accountId });
+}
+
+function getIntervals(accountId) {
+    return { ...getAccountConfigSnapshot(accountId).intervals };
+}
 
 function normalizeIntervals(intervals) {
     const src = (intervals && typeof intervals === 'object') ? intervals : {};
@@ -204,12 +331,12 @@ function normalizeTimeString(v, fallback) {
     return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
-function getFriendQuietHours() {
-    return { ...globalConfig.friendQuietHours };
+function getFriendQuietHours(accountId) {
+    return { ...getAccountConfigSnapshot(accountId).friendQuietHours };
 }
 
-function setFriendQuietHours(cfg) {
-    return applyConfigSnapshot({ friendQuietHours: cfg || {} });
+function setFriendQuietHours(cfg, accountId) {
+    return applyConfigSnapshot({ friendQuietHours: cfg || {} }, { accountId });
 }
 
 function getUI() {
@@ -285,6 +412,7 @@ function deleteAccount(id) {
         data.nextId = 1;
     }
     saveAccounts(data);
+    removeAccountConfig(id);
     return data;
 }
 

@@ -10,6 +10,7 @@ const { getCurrentPhase, setOperationLimitsCallback } = require('./farm');
 const { recordOperation } = require('./stats');
 const { isAutomationOn, getFriendQuietHours } = require('./store');
 const { getPlantName, getPlantById, getSeedImageBySeedId } = require('./gameConfig');
+const { sellAllFruits } = require('./warehouse');
 
 // ============ 内部状态 ============
 let isCheckingFriends = false;
@@ -600,7 +601,20 @@ async function doFriendOperation(friendGid, opType) {
             const maxNum = precheck.canStealNum > 0 ? precheck.canStealNum : status.stealable.length;
             const target = status.stealable.slice(0, maxNum);
             count = await runBatchWithFallback(target, (ids) => stealHarvest(gid, ids), (ids) => stealHarvest(gid, ids));
-            if (count > 0) recordOperation('steal', count);
+            if (count > 0) {
+                recordOperation('steal', count);
+                // 手动偷取成功后立即尝试出售一次果实
+                try {
+                    await sellAllFruits();
+                } catch (e) {
+                    logWarn('仓库', `手动偷取后自动出售失败: ${e.message}`, {
+                        module: 'warehouse',
+                        event: 'sell_after_steal',
+                        result: 'error',
+                        mode: 'manual',
+                    });
+                }
+            }
             return { ok: true, opType, count, message: `偷取完成 ${count} 块` };
         }
 
@@ -947,6 +961,21 @@ async function checkFriends() {
             // 如果捣乱次数用完了，且没有其他操作，可以提前结束
             if (!canOperate(10004) && !canOperate(10003)) {  // 10004=放虫, 10003=放草
                 // 继续巡查，但不再放虫放草
+            }
+        }
+
+        // 自动模式：整轮好友偷取完成后再统一出售一次果实
+        if (totalActions.steal > 0) {
+            try {
+                await sellAllFruits();
+            } catch (e) {
+                logWarn('仓库', `好友巡查后自动出售失败: ${e.message}`, {
+                    module: 'warehouse',
+                    event: 'sell_after_steal',
+                    result: 'error',
+                    mode: 'auto',
+                    stealCount: totalActions.steal,
+                });
             }
         }
 

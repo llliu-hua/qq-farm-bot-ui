@@ -244,7 +244,7 @@ async function loadSeeds(preferredSeed) {
     seedLoadPromise = (async () => {
     const list = await api('/api/seeds');
     const sel = $('seed-select');
-    sel.innerHTML = '<option value="0">自动选择 (等级最高)</option>';
+    sel.innerHTML = '<option value="0">自动选择 (按策略)</option>';
     if (list && list.length) {
         list.forEach(s => {
             const o = document.createElement('option');
@@ -282,10 +282,102 @@ async function loadSeeds(preferredSeed) {
     return seedLoadPromise;
 }
 
-// 绑定自动化开关
+function getCurrentLevelFromUi() {
+    const raw = String(($('level') && $('level').textContent) || '');
+    const m = raw.match(/Lv\s*(\d+)/i);
+    return m ? (parseInt(m[1], 10) || 0) : 0;
+}
+
+function getStrategySortKey(strategy) {
+    const map = {
+        max_exp: 'exp',
+        max_fert_exp: 'fert',
+        max_profit: 'profit',
+        max_fert_profit: 'fert_profit',
+    };
+    return map[String(strategy || '')] || '';
+}
+
+function buildSeedOptionText(seed, seedId) {
+    if (!seed) return `种子${seedId}`;
+    const lv = (seed.requiredLevel === null || seed.requiredLevel === undefined) ? 'Lv?' : `Lv${seed.requiredLevel}`;
+    const price = (seed.price === null || seed.price === undefined) ? '价格未知' : `${seed.price}金`;
+    return `${lv} ${seed.name} (${price})`;
+}
+
+async function resolveStrategySeed(strategy) {
+    const list = await api('/api/seeds');
+    const seeds = Array.isArray(list) ? list : [];
+    const available = seeds.filter(s => !s.locked && !s.soldOut);
+    if (!available.length) return null;
+
+    const availableById = new Map(available.map(s => [Number(s.seedId || 0), s]));
+
+    if (strategy === 'level') {
+        const sorted = [...available].sort((a, b) => {
+            const av = Number(a.requiredLevel || 0);
+            const bv = Number(b.requiredLevel || 0);
+            if (bv !== av) return bv - av;
+            return Number(a.seedId || 0) - Number(b.seedId || 0);
+        });
+        return sorted[0] || null;
+    }
+
+    const sortKey = getStrategySortKey(strategy);
+    if (sortKey) {
+        const level = getCurrentLevelFromUi();
+        const analytics = await api(`/api/analytics?sort=${sortKey}`);
+        const ranked = Array.isArray(analytics) ? analytics : [];
+        for (const row of ranked) {
+            const sid = Number(row && row.seedId) || 0;
+            if (sid <= 0) continue;
+            const reqLv = Number(row && row.level);
+            if (Number.isFinite(reqLv) && reqLv > 0 && level > 0 && reqLv > level) continue;
+            const found = availableById.get(sid);
+            if (found) return found;
+        }
+    }
+
+    const fallback = [...available].sort((a, b) => (Number(b.requiredLevel || 0) - Number(a.requiredLevel || 0)));
+    return fallback[0] || null;
+}
+
+async function refreshSeedSelectByStrategy() {
+    const strategy = String(($('strategy-select') && $('strategy-select').value) || 'preferred');
+    const sel = $('seed-select');
+    if (!sel) return;
+
+    if (strategy === 'preferred') {
+        sel.disabled = false;
+        if (sel.dataset.loaded !== '1') {
+            await loadSeeds(parseInt(sel.value, 10) || 0);
+        }
+        return;
+    }
+
+    sel.disabled = true;
+    const matched = await resolveStrategySeed(strategy);
+    if (!matched) {
+        sel.innerHTML = '<option value="0">当前策略无可用种子</option>';
+        sel.value = '0';
+        sel.dataset.loaded = 'strategy';
+        return;
+    }
+    const sid = Number(matched.seedId || 0);
+    sel.innerHTML = `<option value="${sid}">${buildSeedOptionText(matched, sid)}</option>`;
+    sel.value = String(sid);
+    sel.dataset.loaded = 'strategy';
+}
+
+function markAutomationPending(key) {
+    if (!key) return;
+    pendingAutomationKeys.add(String(key));
+}
+
+// 绑定自动化开关（改为本地待保存，不即时提交）
 $('fertilizer-select').addEventListener('change', async () => {
     if (!currentAccountId) return;
-    queueAutomationUpdate('fertilizer', $('fertilizer-select').value);
+    markAutomationPending('fertilizer');
 });
 
 ['auto-farm', 'auto-farm-push', 'auto-land-upgrade', 'auto-friend', 'auto-task', 'auto-sell', 'auto-friend-steal', 'auto-friend-help', 'auto-friend-bad'].forEach((id, i) => {
@@ -297,7 +389,7 @@ $('fertilizer-select').addEventListener('change', async () => {
     if(el) {
         el.addEventListener('change', async () => {
             if (!currentAccountId) return;
-            queueAutomationUpdate(key, !!el.checked);
+            markAutomationPending(key);
             if (id === 'auto-friend') {
                 updateFriendSubControlsState();
             }
@@ -305,6 +397,10 @@ $('fertilizer-select').addEventListener('change', async () => {
     }
 });
 updateFriendSubControlsState();
+
+$('strategy-select').addEventListener('change', async () => {
+    await refreshSeedSelectByStrategy();
+});
 
 $('btn-save-settings').addEventListener('click', async () => {
     const strategy = $('strategy-select').value;
@@ -338,25 +434,48 @@ $('btn-save-settings').addEventListener('click', async () => {
     $('interval-friend-min').value = String(friendMin);
     $('interval-friend-max').value = String(friendMax);
     
-    updateRevisionState(await api('/api/settings/save', 'POST', {
-        strategy,
-        seedId,
-        intervals: {
-            farm: farmMin,
-            friend: friendMin,
-            farmMin,
-            farmMax,
-            friendMin,
-            friendMax,
-        },
-        friendQuietHours: {
-            enabled: friendQuietEnabled,
-            start: friendQuietStart,
-            end: friendQuietEnd,
-        }
-    }));
-    await loadSettings();
-    alert('设置已保存');
+    const saveBtn = $('btn-save-settings');
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+        const settingsResp = await api('/api/settings/save', 'POST', {
+            strategy,
+            seedId,
+            intervals: {
+                farm: farmMin,
+                friend: friendMin,
+                farmMin,
+                farmMax,
+                friendMin,
+                friendMax,
+            },
+            friendQuietHours: {
+                enabled: friendQuietEnabled,
+                start: friendQuietStart,
+                end: friendQuietEnd,
+            }
+        });
+        updateRevisionState(settingsResp);
+
+        const automationResp = await api('/api/automation', 'POST', {
+            farm: !!$('auto-farm').checked,
+            farm_push: !!$('auto-farm-push').checked,
+            land_upgrade: !!$('auto-land-upgrade').checked,
+            friend: !!$('auto-friend').checked,
+            task: !!$('auto-task').checked,
+            sell: !!$('auto-sell').checked,
+            fertilizer: $('fertilizer-select').value,
+            friend_steal: !!$('auto-friend-steal').checked,
+            friend_help: !!$('auto-friend-help').checked,
+            friend_bad: !!$('auto-friend-bad').checked,
+        });
+        updateRevisionState(automationResp);
+        pendingAutomationKeys.clear();
+
+        await loadSettings();
+        alert('设置已保存');
+    } finally {
+        if (saveBtn) saveBtn.disabled = false;
+    }
 });
 
 // 加载额外设置
@@ -384,6 +503,7 @@ async function loadSettings() {
                 sel.value = String(data.preferredSeed || 0);
             }
         }
+        await refreshSeedSelectByStrategy();
         if (data.friendQuietHours) {
             $('friend-quiet-enabled').checked = !!data.friendQuietHours.enabled;
             $('friend-quiet-start').value = data.friendQuietHours.start || '23:00';

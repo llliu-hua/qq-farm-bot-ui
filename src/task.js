@@ -212,7 +212,7 @@ function onTaskInfoNotify(taskInfo) {
     const hasClaimable = claimable.length > 0;
     if (!hasClaimable && actives.length === 0) return;
     if (hasClaimable) log('任务', `有 ${claimable.length} 个任务可领取，准备自动领取...`, {
-        module: 'task', event: 'task_notify', result: 'ok', count: claimable.length
+        module: 'task', event: 'task_claim', result: 'plan', count: claimable.length
     });
     if (claimTimer) clearTimeout(claimTimer);
     claimTimer = setTimeout(async () => {

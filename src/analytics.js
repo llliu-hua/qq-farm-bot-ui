@@ -17,6 +17,15 @@ function parseGrowTime(growPhases) {
     return totalTime;
 }
 
+function parseNormalFertilizerReduceSec(growPhases) {
+    if (!growPhases) return 0;
+    const phases = String(growPhases).split(';').filter(p => p.length > 0);
+    if (!phases.length) return 0;
+    const first = phases[0];
+    const match = first.match(/:(\d+)$/);
+    return match ? (parseInt(match[1], 10) || 0) : 0;
+}
+
 function formatTime(seconds) {
     if (seconds < 60) return `${seconds}秒`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
@@ -36,14 +45,19 @@ function getPlantRankings(sortBy = 'exp') {
 
     const results = [];
     for (const plant of normalPlants) {
-        const growTime = parseGrowTime(plant.grow_phases);
-        if (growTime <= 0) continue;
+        const baseGrowTime = parseGrowTime(plant.grow_phases);
+        if (baseGrowTime <= 0) continue;
+        const seasons = Number(plant.seasons) || 1;
+        const isTwoSeason = seasons === 2;
+        const growTime = isTwoSeason ? (baseGrowTime * 1.5) : baseGrowTime;
         
-        const harvestExp = parseInt(plant.exp) || 0;
+        const harvestExpBase = parseInt(plant.exp) || 0;
+        const harvestExp = isTwoSeason ? (harvestExpBase * 2) : harvestExpBase;
         const expPerHour = (harvestExp / growTime) * 3600;
-        // 普通化肥：理论加速 20%；但若缩短时间不足30秒，则按固定减少30秒计算
-        const speedupSec = growTime * 0.2;
-        const fertilizedGrowTime = speedupSec < 30 ? (growTime - 30) : (growTime * 0.8);
+        // 普通化肥：直接减少第一生长阶段时长（reduceSec）
+        const reduceSecBase = parseNormalFertilizerReduceSec(plant.grow_phases);
+        const reduceSecApplied = isTwoSeason ? (reduceSecBase * 2) : reduceSecBase;
+        const fertilizedGrowTime = growTime - reduceSecApplied;
         const safeFertilizedTime = fertilizedGrowTime > 0 ? fertilizedGrowTime : 1;
         const normalFertilizerExpPerHour = (harvestExp / safeFertilizedTime) * 3600;
         
@@ -53,7 +67,7 @@ function getPlantRankings(sortBy = 'exp') {
         const seedPrice = getSeedPrice(Number(plant.seed_id) || 0);
 
         // 单次收获总金币（毛收益）与净收益
-        const income = fruitCount * fruitPrice;
+        const income = (fruitCount * fruitPrice) * (isTwoSeason ? 2 : 1);
         const netProfit = income - seedPrice;
         const goldPerHour = (income / growTime) * 3600;
         const profitPerHour = (netProfit / growTime) * 3600;
@@ -65,9 +79,12 @@ function getPlantRankings(sortBy = 'exp') {
             id: plant.id,
             seedId: plant.seed_id,
             name: plant.name,
+            seasons,
             level: requiredLevel,
             growTime,
             growTimeStr: formatTime(growTime),
+            reduceSec: reduceSecBase,
+            reduceSecApplied,
             expPerHour: parseFloat(expPerHour.toFixed(2)),
             normalFertilizerExpPerHour: parseFloat(normalFertilizerExpPerHour.toFixed(2)),
             goldPerHour: parseFloat(goldPerHour.toFixed(2)), // 毛收益/时

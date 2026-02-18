@@ -32,19 +32,25 @@ function nextConfigRevision() {
 }
 
 function buildConfigSnapshot() {
+    return buildConfigSnapshotForAccount('');
+}
+
+function buildConfigSnapshotForAccount(accountId) {
     return {
-        automation: store.getAutomation(),
-        plantingStrategy: store.getPlantingStrategy(),
-        preferredSeedId: store.getPreferredSeed(),
-        intervals: store.getIntervals(),
-        friendQuietHours: store.getFriendQuietHours(),
+        automation: store.getAutomation(accountId),
+        plantingStrategy: store.getPlantingStrategy(accountId),
+        preferredSeedId: store.getPreferredSeed(accountId),
+        intervals: store.getIntervals(accountId),
+        friendQuietHours: store.getFriendQuietHours(accountId),
         __revision: configRevision,
     };
 }
 
-function broadcastConfigToWorkers() {
-    const snapshot = buildConfigSnapshot();
-    for (const worker of Object.values(workers)) {
+function broadcastConfigToWorkers(targetAccountId = '') {
+    const targetId = String(targetAccountId || '').trim();
+    for (const [accId, worker] of Object.entries(workers)) {
+        if (targetId && String(accId) !== targetId) continue;
+        const snapshot = buildConfigSnapshotForAccount(accId);
         try {
             worker.process.send({ type: 'config_sync', config: snapshot });
         } catch (e) {
@@ -56,7 +62,16 @@ function broadcastConfigToWorkers() {
 function log(tag, msg) {
     const time = new Date().toLocaleString();
     console.log(`[${tag}] ${msg}`);
-    GLOBAL_LOGS.push({ time, tag, msg });
+    const moduleName = (tag === '系统' || tag === '错误') ? 'system' : '';
+    const entry = {
+        time,
+        tag,
+        msg,
+        meta: moduleName ? { module: moduleName } : {},
+        ts: Date.now(),
+    };
+    entry._searchText = `${entry.msg || ''} ${entry.tag || ''} ${JSON.stringify(entry.meta || {})}`.toLowerCase();
+    GLOBAL_LOGS.push(entry);
     if (GLOBAL_LOGS.length > 1000) GLOBAL_LOGS.shift();
 }
 
@@ -105,11 +120,12 @@ function buildDefaultStatus(accountId) {
         operations: buildDefaultOperations(),
         sessionExpGained: 0,
         sessionGoldGained: 0,
+        sessionCouponGained: 0,
         lastExpGain: 0,
         lastGoldGain: 0,
         limits: {},
-        automation: store.getAutomation(),
-        preferredSeed: store.getPreferredSeed(),
+        automation: store.getAutomation(accountId),
+        preferredSeed: store.getPreferredSeed(accountId),
         expProgress: { current: 0, needed: 0, level: 0 },
         configRevision,
         accountId: String(accountId || ''),
@@ -131,7 +147,16 @@ function filterLogs(list, filters = {}) {
         if (Number.isFinite(timeFromMs) && Number.isFinite(logMs) && logMs < timeFromMs) return false;
         if (Number.isFinite(timeToMs) && Number.isFinite(logMs) && logMs > timeToMs) return false;
         if (tag && String(l.tag || '') !== tag) return false;
-        if (moduleName && String((l.meta || {}).module || '') !== moduleName) return false;
+        if (moduleName) {
+            const logModule = String((l.meta || {}).module || '');
+            // 兼容历史主进程日志：仅有 tag=系统/错误，没有 meta.module
+            if (moduleName === 'system') {
+                const isSystemTag = String(l.tag || '') === '系统' || String(l.tag || '') === '错误';
+                if (logModule !== 'system' && !isSystemTag) return false;
+            } else if (logModule !== moduleName) {
+                return false;
+            }
+        }
         if (eventName && String((l.meta || {}).event || '') !== eventName) return false;
         if (isWarn !== undefined && isWarn !== null && String(isWarn) !== '') {
             const expected = String(isWarn) === '1' || String(isWarn).toLowerCase() === 'true';
@@ -160,12 +185,13 @@ function startWorker(account) {
         child = fork(__filename, [], {
             execPath: process.execPath,
             stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
-            env: { ...process.env, FARM_WORKER: '1' },
+            env: { ...process.env, FARM_WORKER: '1', FARM_ACCOUNT_ID: String(account.id || '') },
         });
     } else {
         const workerPath = path.join(__dirname, 'src', 'worker.js');
         child = fork(workerPath, [], {
             stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+            env: { ...process.env, FARM_ACCOUNT_ID: String(account.id || '') },
         });
     }
 
@@ -189,7 +215,7 @@ function startWorker(account) {
             platform: account.platform,
         }
     });
-    child.send({ type: 'config_sync', config: buildConfigSnapshot() });
+    child.send({ type: 'config_sync', config: buildConfigSnapshotForAccount(account.id) });
 
     // 监听消息
     child.on('message', (msg) => {
@@ -348,10 +374,10 @@ const dataProvider = {
     getSeeds: (accountId) => callWorkerApi(accountId, 'getSeeds'),
     
     setAutomation: async (accountId, key, value) => {
-        store.setAutomation(key, value);
+        store.setAutomation(key, value, accountId);
         const rev = nextConfigRevision();
-        broadcastConfigToWorkers();
-        return { automation: store.getAutomation(), configRevision: rev };
+        broadcastConfigToWorkers(accountId);
+        return { automation: store.getAutomation(accountId), configRevision: rev };
     },
     reconnect: (accountId, code) => callWorkerApi(accountId, 'reconnect', { code }),
     
@@ -365,14 +391,14 @@ const dataProvider = {
             intervals: body.intervals,
             friendQuietHours: body.friendQuietHours,
         };
-        store.applyConfigSnapshot(snapshot);
+        store.applyConfigSnapshot(snapshot, { accountId });
         const rev = nextConfigRevision();
-        broadcastConfigToWorkers();
+        broadcastConfigToWorkers(accountId);
         return {
-            strategy: store.getPlantingStrategy(),
-            preferredSeed: store.getPreferredSeed(),
-            intervals: store.getIntervals(),
-            friendQuietHours: store.getFriendQuietHours(),
+            strategy: store.getPlantingStrategy(accountId),
+            preferredSeed: store.getPreferredSeed(accountId),
+            intervals: store.getIntervals(accountId),
+            friendQuietHours: store.getFriendQuietHours(accountId),
             configRevision: rev,
         };
     },

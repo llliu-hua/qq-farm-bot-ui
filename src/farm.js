@@ -9,6 +9,7 @@ const { sendMsgAsync, getUserState, networkEvents } = require('./network');
 const { toLong, toNum, getServerTimeSec, toTimeSec, log, logWarn, sleep } = require('./utils');
 const { recordOperation } = require('./stats');
 const { getPlantNameBySeedId, getPlantName, getPlantExp, formatGrowTime, getPlantGrowTime, getAllSeeds, getPlantById, getSeedImageBySeedId } = require('./gameConfig');
+const { getPlantRankings } = require('./analytics');
 const { isAutomationOn, getPreferredSeed, getAutomation, getPlantingStrategy } = require('./store');
 
 // ============ 内部状态 ============
@@ -232,6 +233,32 @@ async function findBestSeed() {
 
     // 按策略排序
     const strategy = getPlantingStrategy();
+    const analyticsSortByMap = {
+        max_exp: 'exp',
+        max_fert_exp: 'fert',
+        max_profit: 'profit',
+        max_fert_profit: 'fert_profit',
+    };
+    const analyticsSortBy = analyticsSortByMap[strategy];
+    if (analyticsSortBy) {
+        try {
+            const rankings = getPlantRankings(analyticsSortBy);
+            const availableBySeedId = new Map(available.map(a => [a.seedId, a]));
+            for (const row of rankings) {
+                const seedId = Number(row && row.seedId) || 0;
+                if (seedId <= 0) continue;
+                const lv = Number(row && row.level);
+                if (Number.isFinite(lv) && lv > state.level) continue;
+                const found = availableBySeedId.get(seedId);
+                if (found) return found;
+            }
+            logWarn('商店', `策略 ${strategy} 未找到可购买作物，回退最高等级`);
+        } catch (e) {
+            logWarn('商店', `策略 ${strategy} 计算失败: ${e.message}，回退最高等级`);
+        }
+        available.sort((a, b) => b.requiredLevel - a.requiredLevel);
+        return available[0];
+    }
     
     // 偏好模式
     if (strategy === 'preferred') {
@@ -882,9 +909,6 @@ function startFarmCheckLoop(options = {}) {
 let lastPushTime = 0;
 function onLandsChangedPush(lands) {
     if (!isAutomationOn('farm_push')) {
-        log('农场', `收到推送: ${lands.length}块土地变化，已忽略(推送触发已关闭)`, {
-            module: 'farm', event: 'lands_notify', result: 'ignored', reason: 'farm_push_off', count: lands.length
-        });
         return;
     }
     if (isCheckingFarm) return;

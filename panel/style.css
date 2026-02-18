@@ -141,7 +141,7 @@ body.light-theme .account-option:hover { background: rgba(0,0,0,0.05); }
 .compact-status {
   display: grid;
   grid-template-columns: repeat(8, minmax(0,1fr));
-  gap: 12px;
+  gap: 10px;
 }
 .status-item {
   border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--panel-2);
@@ -176,6 +176,11 @@ body.light-theme .account-option:hover { background: rgba(0,0,0,0.05); }
 .status-item.runtime-item .k { font-size: calc(13px * var(--font-scale)); }
 .status-item .gain-gold { color: var(--primary); font-weight: 600; }
 .status-item .gain-gold.negative { color: var(--danger); }
+.gold-card .status-dual-col .gain-gold {
+  display: block;
+  margin-top: 2px;
+  line-height: 1.2;
+}
 .gold-card .v { font-size: calc(26px * var(--font-scale)); }
 .exp-meta-row {
   display: flex;
@@ -299,14 +304,14 @@ body.light-theme .account-option:hover { background: rgba(0,0,0,0.05); }
   .dashboard-grid > .logs-card { margin-bottom: 0; }
   #page-dashboard .compact-status { margin-bottom: 22px; }
   #page-dashboard .dashboard-grid {
-    grid-template-columns: 1.75fr 0.65fr;
+    grid-template-columns: 4fr 1fr;
     column-gap: 18px;
     row-gap: 22px;
     align-items: stretch;
   }
   #page-dashboard .side-stack {
     gap: clamp(8px, 1.1vh, 12px);
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(clamp(140px, 18vh, 220px), auto) minmax(0, 1fr);
   }
   #page-dashboard .side-stack > .card {
     margin-bottom: 0;
@@ -345,6 +350,18 @@ body.light-theme .account-option:hover { background: rgba(0,0,0,0.05); }
     line-height: 1.2;
   }
   #page-dashboard .ops-list .op-stat .count {
+    font-size: clamp(calc(18px * var(--font-scale)), calc(23px * var(--font-scale)), calc(30px * var(--font-scale)));
+    display: inline-flex;
+    align-items: center;
+    line-height: 1.2;
+  }
+  #page-dashboard .next-check-item .label {
+    font-size: clamp(calc(16px * var(--font-scale)), calc(20px * var(--font-scale)), calc(26px * var(--font-scale)));
+    display: inline-flex;
+    align-items: center;
+    line-height: 1.2;
+  }
+  #page-dashboard .next-check-item .value {
     font-size: clamp(calc(18px * var(--font-scale)), calc(23px * var(--font-scale)), calc(30px * var(--font-scale)));
     display: inline-flex;
     align-items: center;
@@ -440,7 +457,7 @@ body.light-theme .account-option:hover { background: rgba(0,0,0,0.05); }
   .nav-item { padding: 10px 12px; font-size: calc(18px * var(--font-scale)); }
   .compact-status {
     grid-template-columns: repeat(8, minmax(0,1fr));
-    gap: 22px;
+    gap: 16px;
   }
   .compact-status .status-item {
     padding: 10px;
@@ -474,7 +491,7 @@ body.light-theme .account-option:hover { background: rgba(0,0,0,0.05); }
 body.light-theme .progress { background: rgba(0,0,0,0.08); }
 .progress-fill { height: 100%; background: linear-gradient(90deg, #3ea9ff, #6ad7ff); }
 
-.dashboard-grid { display: grid; grid-template-columns: 1.45fr .95fr; gap: 14px; align-items: stretch; }
+.dashboard-grid { display: grid; grid-template-columns: 4fr 1fr; gap: 14px; align-items: stretch; }
 .side-stack { display: grid; gap: 14px; }
 .logs-card { display: flex; flex-direction: column; min-height: 0; height: auto; max-height: none; }
 
@@ -553,6 +570,51 @@ body.light-theme .progress { background: rgba(0,0,0,0.08); }
 .ops-list { min-height: 220px; align-content: start; }
 .op-stat { display: flex; justify-content: space-between; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
 .op-stat .count { color: var(--accent); font-weight: 700; }
+.op-stat .label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+}
+.op-stat .label i {
+  width: 1.1em;
+  text-align: center;
+  color: var(--sub);
+}
+.next-checks-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  align-content: stretch;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+.next-check-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  min-height: clamp(44px, 4.8vh, 62px);
+}
+.next-check-item .label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+}
+.next-check-item .label i {
+  width: 1.1em;
+  text-align: center;
+  color: var(--sub);
+}
+.next-check-item .value {
+  color: var(--accent);
+  font-weight: 700;
+}
 
 .switches-list { display: grid; gap: 16px; }
 .switch-inline-row {
@@ -836,8 +898,19 @@ body.light-theme .tab-btn.active {
   border-color: transparent;
   color: #fff;
 }
+#btn-qr-open-url {
+  display: none;
+  font-weight: 700;
+  background: var(--btn-primary-bg);
+  border-color: transparent;
+  color: #fff;
+}
+#btn-qr-open-url:hover {
+  filter: brightness(0.98);
+}
 body.light-theme #btn-qr-generate,
-body.light-theme #btn-save-acc {
+body.light-theme #btn-save-acc,
+body.light-theme #btn-qr-open-url {
   color: #1f2a33;
 }
 
@@ -846,6 +919,18 @@ body.light-theme #btn-save-acc {
 .checkbox-inline { display: inline-flex; gap: 8px; align-items: center; }
 .save-btn { width: 100%; }
 .compact-select { width: 140px; }
+.settings-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(10px, 1.2vh, 18px);
+  align-items: stretch;
+}
+.settings-layout > .card {
+  margin-bottom: 0;
+}
+.settings-actions {
+  margin-top: clamp(10px, 1.2vh, 18px);
+}
 
 /* 分析页表格宽度约束，避免移动端撑宽页面 */
 #analytics-list {
@@ -869,23 +954,27 @@ body.light-theme #btn-save-acc {
 
 /* Settings page readability */
 #page-settings .card-head {
-  margin-bottom: clamp(12px, 1.4vh, 24px);
+  margin-bottom: clamp(10px, 1.2vh, 22px);
 }
-#page-settings .settings-grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); gap: 16px 20px; }
-#page-settings .form-group { margin-bottom: 6px; }
+#page-settings .settings-grid {
+  grid-template-columns: repeat(2, minmax(clamp(160px, 18vw, 260px), 1fr));
+  gap: clamp(10px, 1.2vh, 18px) clamp(12px, 1vw, 20px);
+}
+#page-settings .form-group { margin-bottom: clamp(2px, 0.3vh, 8px); }
 #page-settings .form-group label {
   display: block;
-  margin-bottom: 8px;
-  font-size: calc(18px * var(--font-scale));
+  margin-bottom: clamp(5px, 0.7vh, 10px);
+  font-size: clamp(calc(15px * var(--font-scale)), calc(17px * var(--font-scale)), calc(20px * var(--font-scale)));
   color: var(--text);
   line-height: 1.35;
 }
 #page-settings .form-control {
-  font-size: calc(17px * var(--font-scale));
-  padding: 12px 12px;
-  min-height: 46px;
+  font-size: clamp(calc(14px * var(--font-scale)), calc(16px * var(--font-scale)), calc(19px * var(--font-scale)));
+  padding: clamp(8px, 0.85vh, 12px) clamp(9px, 0.8vw, 12px);
+  min-height: clamp(38px, 4.2vh, 46px);
   border-radius: 10px;
-  width: min(100%, var(--settings-control-width));
+  width: 100%;
+  max-width: none;
 }
 #page-settings #strategy-select,
 #page-settings #seed-select,
@@ -893,12 +982,40 @@ body.light-theme #btn-save-acc {
 #page-settings #interval-farm-max,
 #page-settings #interval-friend-min,
 #page-settings #interval-friend-max {
-  width: min(100%, var(--settings-control-width));
-  max-width: var(--settings-control-width);
+  width: 100%;
+  max-width: none;
 }
-#page-settings .checkbox-inline { gap: 10px; font-size: calc(18px * var(--font-scale)); }
-#page-settings .checkbox-inline input[type="checkbox"] { width: 18px; height: 18px; }
-#page-settings .save-btn { margin-top: 14px; font-size: calc(18px * var(--font-scale)); padding: 12px 14px; }
+#page-settings .checkbox-inline {
+  gap: clamp(8px, 0.8vh, 12px);
+  font-size: clamp(calc(15px * var(--font-scale)), calc(17px * var(--font-scale)), calc(20px * var(--font-scale)));
+}
+#page-settings .checkbox-inline input[type="checkbox"] {
+  width: clamp(16px, 1.5vh, 20px);
+  height: clamp(16px, 1.5vh, 20px);
+}
+#page-settings .save-btn {
+  margin-top: clamp(10px, 1vh, 16px);
+  font-size: clamp(calc(15px * var(--font-scale)), calc(17px * var(--font-scale)), calc(20px * var(--font-scale)));
+  padding: clamp(10px, 1vh, 13px) clamp(12px, 1vw, 16px);
+}
+#page-settings #card-efficiency {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#page-settings #card-efficiency .switches-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: clamp(8px, 1vh, 14px);
+}
+#page-dashboard .side-stack > .card:has(#next-checks-list) {
+  display: flex;
+  flex-direction: column;
+  min-height: clamp(140px, 18vh, 220px);
+}
 
 .modal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.55); z-index: 100; }
 .modal.show { display: flex; }
@@ -1039,7 +1156,10 @@ body.light-theme #btn-save-acc {
 @media (max-width: 1280px) {
   .compact-status { grid-template-columns: repeat(4,minmax(0,1fr)); }
   .status-item.stretch { grid-column: span 2; }
-  .dashboard-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 1200px) {
+  .dashboard-grid { grid-template-columns: 1fr; gap: 12px; }
+  .settings-layout { grid-template-columns: 1fr; }
 }
 @media (max-width: 980px) {
   html, body { height: auto; min-height: 100%; }
@@ -1200,6 +1320,8 @@ body.light-theme #btn-save-acc {
 
   .accounts-grid { grid-template-columns: 1fr; }
   .settings-grid { grid-template-columns: 1fr; gap: 8px; }
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-actions { margin-top: 10px; }
   .compact-select { width: 100%; }
   #analytics-list table { font-size: calc(14px * var(--font-scale)) !important; }
   #analytics-list th, #analytics-list td { padding: 8px 6px !important; }
@@ -1254,6 +1376,7 @@ body.light-theme #btn-save-acc {
   #qr-code-img { width: 172px; height: 172px; }
   .login-card { width: 94vw; padding: 12px; }
 }
+
 
 @media (min-width: 2200px) and (min-height: 1300px) {
   .brand { font-size: calc(38px * var(--font-scale)); }

@@ -92,7 +92,6 @@ function startAdminServer(dataProvider) {
 
     app.post('/api/automation', async (req, res) => {
         const id = getAccId(req);
-        if (!id) return res.status(400).json({ ok: false });
         try {
             let lastData = null;
             for (const [k, v] of Object.entries(req.body)) {
@@ -259,11 +258,12 @@ function startAdminServer(dataProvider) {
     // API: 获取配置
     app.get('/api/settings', async (req, res) => {
         try {
+            const id = getAccId(req);
             // 直接从主进程的 store 读取，确保即使账号未运行也能获取配置
-            const intervals = store.getIntervals();
-            const strategy = store.getPlantingStrategy();
-            const preferredSeed = store.getPreferredSeed();
-            const friendQuietHours = store.getFriendQuietHours();
+            const intervals = store.getIntervals(id);
+            const strategy = store.getPlantingStrategy(id);
+            const preferredSeed = store.getPreferredSeed(id);
+            const friendQuietHours = store.getFriendQuietHours(id);
             const ui = store.getUI();
             res.json({ ok: true, data: { intervals, strategy, preferredSeed, friendQuietHours, ui } });
         } catch (e) {

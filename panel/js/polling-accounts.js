@@ -1,3 +1,5 @@
+const CURRENT_ACCOUNT_STORAGE_KEY = 'currentAccountId';
+
 async function loadAccounts() {
     return runDedupedRequest('loadAccounts', async () => {
         const list = await api('/api/accounts');
@@ -12,15 +14,18 @@ async function loadAccounts() {
             const hasCurrent = currentAccountId && accounts.some(a => a.id === currentAccountId);
             if (!hasCurrent) currentAccountId = null;
 
-            // 如果当前没有选中账号，且有账号，默认选第一个
+            // 如果当前没有选中账号，尝试恢复上次选择；仍无则默认第一个
             if (!currentAccountId && accounts.length > 0) {
-                switchAccount(accounts[0].id);
+                const savedId = String(localStorage.getItem(CURRENT_ACCOUNT_STORAGE_KEY) || '');
+                const matched = savedId ? accounts.find(a => String(a.id) === savedId) : null;
+                switchAccount((matched && matched.id) || accounts[0].id);
             } else if (accounts.length === 0) {
                 $('current-account-name').textContent = '无账号';
                 updateTopbarAccount({ name: '无账号' });
                 resetDashboardStats();
                 clearFarmView('暂无账号，请先添加账号');
                 clearFriendsView('暂无账号，请先添加账号');
+                localStorage.removeItem(CURRENT_ACCOUNT_STORAGE_KEY);
             } else {
                 updateTopbarAccount(accounts.find(a => a.id === currentAccountId) || null);
                 if (!hasCurrent && prevCurrentId) {
@@ -53,8 +58,10 @@ function renderAccountSelector() {
 
 function switchAccount(id) {
     currentAccountId = id;
+    localStorage.setItem(CURRENT_ACCOUNT_STORAGE_KEY, String(id || ''));
     expHistory = [];
     lastOperationsData = {};
+    renderAccountSelector();
     const acc = accounts.find(a => a.id === id);
     if (acc) {
         $('current-account-name').textContent = acc.name;
@@ -63,14 +70,16 @@ function switchAccount(id) {
     const seedSel = $('seed-select');
     if (seedSel) {
         seedSel.dataset.loaded = '0';
-        seedSel.innerHTML = '<option value="0">自动选择 (等级最高)</option>';
+        seedSel.innerHTML = '<option value="0">自动选择 (按策略)</option>';
     }
     renderOpsList({});
     // 刷新所有数据
-    pollStatus();
+    pollStatus({ syncNextChecks: true });
     pollFertilizerBuckets(true);
     pollLogs();
+    Promise.resolve(loadSettings()).catch(() => null);
     if ($('page-farm').classList.contains('active')) loadFarm();
+    if ($('page-bag').classList.contains('active')) loadBag();
     if ($('page-friends').classList.contains('active')) loadFriends();
 }
 
@@ -85,11 +94,60 @@ document.addEventListener('click', () => $('account-dropdown').classList.remove(
 // 限制经验效率更新频率 (每10秒)
 let lastRateUpdate = 0;
 let lastFertilizerPollAt = 0;
+let localNextFarmRemainSec = NaN;
+let localNextFriendRemainSec = NaN;
+let nextCheckSyncRequested = false;
+let nextCheckSyncPending = false;
 const LOG_VIRTUAL_ROW_HEIGHT = 28;
 const LOG_VIRTUAL_OVERSCAN = 10;
 let logVirtualItems = [];
 let logVirtualScrollRaf = null;
 let logVirtualBoundWrap = null;
+
+function resetLocalNextChecks() {
+    localNextFarmRemainSec = NaN;
+    localNextFriendRemainSec = NaN;
+    nextCheckSyncRequested = false;
+    const farmEl = $('next-farm-check');
+    const friendEl = $('next-friend-check');
+    if (farmEl) farmEl.textContent = '--';
+    if (friendEl) friendEl.textContent = '--';
+}
+
+function renderLocalNextChecks() {
+    const farmEl = $('next-farm-check');
+    const friendEl = $('next-friend-check');
+    if (farmEl) {
+        farmEl.textContent = Number.isFinite(localNextFarmRemainSec)
+            ? fmtTime(Math.max(0, localNextFarmRemainSec))
+            : '--';
+    }
+    if (friendEl) {
+        friendEl.textContent = Number.isFinite(localNextFriendRemainSec)
+            ? fmtTime(Math.max(0, localNextFriendRemainSec))
+            : '--';
+    }
+}
+
+setInterval(() => {
+    let reachedZero = false;
+    if (Number.isFinite(localNextFarmRemainSec) && localNextFarmRemainSec > 0) {
+        localNextFarmRemainSec = Math.max(0, localNextFarmRemainSec - 1);
+        if (localNextFarmRemainSec === 0) reachedZero = true;
+    }
+    if (Number.isFinite(localNextFriendRemainSec) && localNextFriendRemainSec > 0) {
+        localNextFriendRemainSec = Math.max(0, localNextFriendRemainSec - 1);
+        if (localNextFriendRemainSec === 0) reachedZero = true;
+    }
+    renderLocalNextChecks();
+
+    if (reachedZero && !nextCheckSyncRequested && isLoggedIn && currentAccountId) {
+        nextCheckSyncRequested = true;
+        pollStatus({ syncNextChecks: true })
+            .catch(() => null)
+            .finally(() => { nextCheckSyncRequested = false; });
+    }
+}, 1000);
 
 function ensureVirtualLogBinding(wrap) {
     if (!wrap || logVirtualBoundWrap === wrap) return;
@@ -164,11 +222,16 @@ async function pollFertilizerBuckets(force = false) {
     });
 }
 
-async function pollStatus() {
+async function pollStatus(options = {}) {
+    if (options && options.syncNextChecks) {
+        nextCheckSyncPending = true;
+    }
     if (!currentAccountId) {
         $('conn-text').textContent = '请添加账号';
         $('conn-dot').className = 'dot offline';
         resetDashboardStats();
+        resetLocalNextChecks();
+        nextCheckSyncPending = false;
         return;
     }
     const key = `pollStatus:${currentAccountId}`;
@@ -181,6 +244,8 @@ async function pollStatus() {
             lastServerUptime = 0;
             lastSyncTimestamp = 0;
             renderOpsList({});
+            resetLocalNextChecks();
+            nextCheckSyncPending = false;
             if (currentAccountId) {
                 loadAccounts();
             }
@@ -208,6 +273,15 @@ async function pollStatus() {
         lastSyncTimestamp = Date.now();
         updateUptimeDisplay();
     }
+
+    if (nextCheckSyncPending) {
+        const farmRemain = toSafeNumber(data.nextChecks?.farmRemainSec, NaN);
+        const friendRemain = toSafeNumber(data.nextChecks?.friendRemainSec, NaN);
+        localNextFarmRemainSec = Number.isFinite(farmRemain) ? Math.max(0, Math.floor(farmRemain)) : NaN;
+        localNextFriendRemainSec = Number.isFinite(friendRemain) ? Math.max(0, Math.floor(friendRemain)) : NaN;
+        renderLocalNextChecks();
+        nextCheckSyncPending = false;
+    }
     
     // Exp
     const ep = data.expProgress;
@@ -220,6 +294,7 @@ async function pollStatus() {
     // Session Gains & History
     const expGain = toSafeNumber(data.sessionExpGained, 0);
     const goldGain = toSafeNumber(data.sessionGoldGained, 0);
+    const couponGain = toSafeNumber(data.sessionCouponGained, 0);
     
     // stat-exp 显示会话总增量
     updateValueWithAnim('stat-exp', (expGain >= 0 ? '+' : '') + Math.floor(expGain));
@@ -227,6 +302,11 @@ async function pollStatus() {
     const goldGainEl = $('stat-gold');
     if (goldGainEl) {
         goldGainEl.classList.toggle('negative', goldGain < 0);
+    }
+    updateValueWithAnim('stat-coupon', (couponGain >= 0 ? '+' : '') + Math.floor(couponGain));
+    const couponGainEl = $('stat-coupon');
+    if (couponGainEl) {
+        couponGainEl.classList.toggle('negative', couponGain < 0);
     }
     
     // 记录历史数据用于图表 (每分钟记录一次)
@@ -298,10 +378,14 @@ async function pollStatus() {
     // Seed Pref
         if (document.activeElement !== $('seed-select') && data.preferredSeed !== undefined) {
             const sel = $('seed-select');
-            if (sel.dataset.loaded !== '1') {
-                await loadSeeds(data.preferredSeed);
-            } else {
-                sel.value = String(data.preferredSeed || 0);
+            const strategySel = $('strategy-select');
+            const isPreferred = !strategySel || String(strategySel.value || 'preferred') === 'preferred';
+            if (isPreferred) {
+                if (sel.dataset.loaded !== '1') {
+                    await loadSeeds(data.preferredSeed);
+                } else {
+                    sel.value = String(data.preferredSeed || 0);
+                }
             }
         }
     });
